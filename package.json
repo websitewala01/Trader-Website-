@@ -1,0 +1,22 @@
+{
+  "name": "forex-website",
+  "version": "1.0.0",
+  "description": "Existing static website; Firebase project: `forex-trader-website`. No npm install or compilation is needed.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:carousel": "node scripts/build-carousel.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "firebase": "^13.1.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.11"
+  }
+}

@@ -1,0 +1,8 @@
+# robots.txt for Trading Creator (https://forex-trader-website.web.app)
+# Note: robots.txt guides search crawlers only; private data is protected by Firebase Authentication & Security Rules.
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /journal
+
+Sitemap: https://forex-trader-website.web.app/sitemap.xml

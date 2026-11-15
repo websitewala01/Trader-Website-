@@ -1,0 +1,175 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.role == 'admin' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+    function validString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    // Default deny all unmatched paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Admin registry (Read-only for self/admin; written ONLY via Firebase Admin SDK / Cloud Functions)
+    match /admins/{adminUid} {
+      allow read: if isOwner(adminUid) || isAdmin();
+      allow write: if false;
+    }
+
+    // Public Website Configuration & Content Collections (Public Read, Admin-Only Write)
+    match /publicSettings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /brokers/{brokerId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /courses/{courseId} {
+      allow read: if resource.data.published == true || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /memberships/{tierId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /books/{bookId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /videos/{videoId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /pineScripts/{scriptId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /pnlEntries/{entryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /quizzes/{quizId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /faqs/{faqId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // User Profiles & Private Subcollections (Strict User Isolation — No Privilege Escalation)
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.uid == request.auth.uid
+        && (!('role' in request.resource.data) || request.resource.data.role == 'user')
+        && (!('vipApproved' in request.resource.data) || request.resource.data.vipApproved == false)
+        && !('accessToken' in request.resource.data)
+        && !('idToken' in request.resource.data)
+        && !('password' in request.resource.data);
+      allow update: if (isOwner(userId)
+        && request.resource.data.uid == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'vipApproved', 'paymentStatus'])
+        && !('accessToken' in request.resource.data)
+        && !('idToken' in request.resource.data)
+        && !('password' in request.resource.data))
+        || isAdmin();
+      allow delete: if isAdmin();
+
+      // Private Personal Trading Journal (Strictly Owner-Only + Schema/Bounds Validation)
+      match /tradingJournals/{tradeId} {
+        allow read, delete: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.keys().hasOnly(['id', 'date', 'market', 'symbol', 'side', 'qty', 'entry', 'exit', 'sl', 'setup', 'mindset', 'notes', 'updatedAt'])
+          && validString(request.resource.data.symbol, 1, 32)
+          && request.resource.data.side in ['LONG', 'SHORT']
+          && request.resource.data.qty is number && request.resource.data.qty > 0 && request.resource.data.qty <= 1000000
+          && request.resource.data.entry is number && request.resource.data.entry > 0
+          && request.resource.data.exit is number && request.resource.data.exit > 0
+          && request.resource.data.sl is number && request.resource.data.sl > 0
+          && (!('notes' in request.resource.data) || validString(request.resource.data.notes, 0, 500));
+      }
+      match /tradingPerformance/{recordId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // User Quiz Attempts
+    match /quizAttempts/{attemptId} {
+      allow read: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.score is number && request.resource.data.score >= 0 && request.resource.data.score <= 10000
+        && request.resource.data.total is number && request.resource.data.total > 0;
+      allow update, delete: if isAdmin();
+    }
+
+    // VIP Broker UID Verification Requests
+    match /vipRequests/{reqId} {
+      allow read: if isSignedIn() && (resource.data.userUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly(['id', 'broker', 'brokerUid', 'userUid', 'status', 'submittedAt'])
+        && request.resource.data.userUid == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && validString(request.resource.data.broker, 2, 40)
+        && validString(request.resource.data.brokerUid, 4, 32);
+      allow update, delete: if isAdmin();
+    }
+
+    // Live Traders Community Messages & Reports (Anti-Role-Spoofing & Field Allowlist)
+    match /communityMessages/{msgId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly(['docId', 'uid', 'channel', 'user', 'role', 'time', 'createdAt', 'text', 'img', 'reactions'])
+        && request.resource.data.uid == request.auth.uid
+        && (request.resource.data.role == 'TRADER' || isAdmin())
+        && validString(request.resource.data.user, 1, 40)
+        && validString(request.resource.data.text, 1, 500);
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['uid', 'role', 'createdAt'])
+        && validString(request.resource.data.text, 1, 500)
+      );
+      allow delete: if isSignedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+    }
+    match /communityReports/{repId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.reportedBy == request.auth.uid
+        && validString(request.resource.data.text, 1, 600);
+    }
+
+    // Atomic Payment & Order Transaction Collections (Parts 4 & 5: Idempotency & Atomic Transactions)
+    match /payments/{paymentId} {
+      allow read: if isSignedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() && validString(request.resource.data.idempotencyKey, 6, 120);
+      allow update, delete: if isAdmin();
+    }
+    match /orders/{orderId} {
+      allow read: if isSignedIn() && (resource.data.user_id == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.resource.data.user_id == request.auth.uid
+        && validString(request.resource.data.payment_id, 4, 80)
+        && validString(request.resource.data.idempotencyKey, 6, 120);
+      allow update, delete: if isAdmin();
+    }
+    match /idempotencyKeys/{keyId} {
+      allow read, create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+  }
+}
